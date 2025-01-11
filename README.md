@@ -2,6 +2,8 @@
 
 Based on: https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo_rnn.py
 
+download model: https://huggingface.co/BlinkDL/rwkv-7-pile/tree/main
+
 Run the code:
 `
 python3 -m venv venv
