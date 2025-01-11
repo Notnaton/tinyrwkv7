@@ -14,7 +14,7 @@ python3 rwkv7.py
 ```
 
 Current output:
-``
+``` 
 The capital of France isys had
 The capital of France isys had side
 The capital of France isys had side is
