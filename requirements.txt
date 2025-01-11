@@ -1,0 +1,4 @@
+numpy==2.2.1
+tinygrad==0.10.0
+tokenizers==0.21.0
+
