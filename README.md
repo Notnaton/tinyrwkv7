@@ -7,7 +7,7 @@ download model: https://huggingface.co/BlinkDL/rwkv-7-pile/tree/main
 Run the code:
 ```
 python3 -m venv venv
-
+source .venv/bin/activate
 pip install -r requirements.txt 
 
 python3 rwkv7.py 
