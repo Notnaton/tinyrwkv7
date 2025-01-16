@@ -23,31 +23,33 @@ class RWKV_RNN:
         model = torch_load(config.get("model_name"))
 
         for key in model.keys():
-            if key.endswith(('att.w0', 'att.r_k', 'att.a0', 'att.a1', 'att.a2')):
-                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.bfloat16).squeeze()
+            if key.endswith(('att.w0', 'att.a0', 'att.a1', 'att.a2')):
+                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).squeeze()
+            elif key.endswith('att.r_k'):
+                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).flatten().squeeze()
             else:
-                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.bfloat16).squeeze()
+                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).squeeze()
 
         self.model['blocks.0.att.v0'] = self.model['blocks.0.att.a0']
         self.model['blocks.0.att.v1'] = self.model['blocks.0.att.a1']
         self.model['blocks.0.att.v2'] = self.model['blocks.0.att.a2']
 
         self.model['emb.weight'] = (
-            model['emb.weight'].to(Device.DEFAULT).cast(dtypes.bfloat16).layernorm()
-            * model['blocks.0.ln0.weight'].to(Device.DEFAULT).cast(dtypes.bfloat16)
-            + model['blocks.0.ln0.bias'].to(Device.DEFAULT).cast(dtypes.bfloat16)
+            model['emb.weight'].to(Device.DEFAULT).cast(dtypes.float32).layernorm()
+            * model['blocks.0.ln0.weight'].to(Device.DEFAULT).cast(dtypes.float32)
+            + model['blocks.0.ln0.bias'].to(Device.DEFAULT).cast(dtypes.float32)
         )
 
     def init_state(self):
         return [
-            Tensor.zeros(self.n_embedding, dtype=dtypes.bfloat16).to(Device.DEFAULT),
-            Tensor.zeros((self.n_embedding // self.head_size, self.head_size, self.head_size), dtype=dtypes.bfloat16).to(Device.DEFAULT),
-            Tensor.zeros(self.n_embedding, dtype=dtypes.bfloat16).to(Device.DEFAULT)
+            Tensor.zeros(self.n_embedding, dtype=dtypes.float32).to(Device.DEFAULT),
+            Tensor.zeros((self.n_embedding // self.head_size, self.head_size, self.head_size), dtype=dtypes.float32).to(Device.DEFAULT),
+            Tensor.zeros(self.n_embedding, dtype=dtypes.float32).to(Device.DEFAULT)
         ] * self.n_layer
 
     def forward(self, token: int, state: List[Tensor]):
         z = self.model
-        x = z['emb.weight'][token]
+        x: Tensor = z['emb.weight'][token]
         v_first = Tensor.zeros_like(x)
 
         for i in range(self.n_layer):
@@ -103,11 +105,11 @@ class RWKV_RNN:
         xg = x + xx * x_g
 
         r = rw @ xr
-        w = ((xw @ w1).tanh() @ w2)
+        w = Tensor.tanh(xw @ w1) @ w2 #((xw @ w1).tanh() @ w2)
         k = kw @ xk
         v = vw @ xv
-        a = (xa @ a1 @ a2 + a0).sigmoid()
-        g = (xg @ g1 @ g2).sigmoid()
+        a = Tensor.sigmoid(a0 + (xa @ a1) @ a2) #(xa @ a1 @ a2 + a0).sigmoid()
+        g = Tensor.sigmoid(xg @ g1) @ g2 #(xg @ g1 @ g2).sigmoid()
 
         if layer_id == 0:
             v_first = v

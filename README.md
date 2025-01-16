@@ -15,21 +15,14 @@ python3 rwkv7.py
 
 Current output:
 ``` 
-The capital of France isys had
-The capital of France isys had side
-The capital of France isys had side is
-The capital of France isys had side isave
-The capital of France isys had side isave two
-The capital of France isys had side isave two two
-The capital of France isys had side isave two two
-
-The capital of France isys had side isave two two
-
-
-The capital of France isys had side isave two two
-
-2
-The capital of France isys had side isave two two
-
-2 <
+People from France speak French,
+People from France speak French, and
+People from France speak French, and the
+People from France speak French, and the rest
+People from France speak French, and the rest of
+People from France speak French, and the rest of the
+People from France speak French, and the rest of the world
+People from France speak French, and the rest of the world speaks
+People from France speak French, and the rest of the world speaks English
+People from France speak French, and the rest of the world speaks English.
 ```
