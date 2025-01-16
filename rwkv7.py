@@ -105,11 +105,11 @@ class RWKV_RNN:
         xg = x + xx * x_g
 
         r = rw @ xr
-        w = Tensor.tanh(xw @ w1) @ w2 #((xw @ w1).tanh() @ w2)
+        w = Tensor.tanh(xw @ w1) @ w2 
         k = kw @ xk
         v = vw @ xv
-        a = Tensor.sigmoid(a0 + (xa @ a1) @ a2) #(xa @ a1 @ a2 + a0).sigmoid()
-        g = Tensor.sigmoid(xg @ g1) @ g2 #(xg @ g1 @ g2).sigmoid()
+        a = Tensor.sigmoid(a0 + (xa @ a1) @ a2) 
+        g = Tensor.sigmoid(xg @ g1) @ g2 
 
         if layer_id == 0:
             v_first = v
