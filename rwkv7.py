@@ -18,33 +18,34 @@ class RWKV_RNN:
         self.n_head = config.get("n_head")
         self.head_size = config.get("head_size")
         self.vocab_size = config.get("vocab_size")
+        self.type = config.get("dtype", dtypes.float32)
         self.model = {}
 
         model = torch_load(config.get("model_name"))
 
         for key in model.keys():
             if key.endswith(('att.w0', 'att.a0', 'att.a1', 'att.a2')):
-                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).squeeze()
+                self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
             elif key.endswith('att.r_k'):
-                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).flatten().squeeze()
+                self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).flatten().squeeze()
             else:
-                self.model[key] = model[key].to(Device.DEFAULT).cast(dtypes.float32).squeeze()
+                self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
 
         self.model['blocks.0.att.v0'] = self.model['blocks.0.att.a0']
         self.model['blocks.0.att.v1'] = self.model['blocks.0.att.a1']
         self.model['blocks.0.att.v2'] = self.model['blocks.0.att.a2']
 
         self.model['emb.weight'] = (
-            model['emb.weight'].to(Device.DEFAULT).cast(dtypes.float32).layernorm()
-            * model['blocks.0.ln0.weight'].to(Device.DEFAULT).cast(dtypes.float32)
-            + model['blocks.0.ln0.bias'].to(Device.DEFAULT).cast(dtypes.float32)
+            model['emb.weight'].to(Device.DEFAULT).cast(self.type).layernorm()
+            * model['blocks.0.ln0.weight'].to(Device.DEFAULT).cast(self.type)
+            + model['blocks.0.ln0.bias'].to(Device.DEFAULT).cast(self.type)
         )
 
     def init_state(self):
         return [
-            Tensor.zeros(self.n_embedding, dtype=dtypes.float32).to(Device.DEFAULT),
-            Tensor.zeros((self.n_embedding // self.head_size, self.head_size, self.head_size), dtype=dtypes.float32).to(Device.DEFAULT),
-            Tensor.zeros(self.n_embedding, dtype=dtypes.float32).to(Device.DEFAULT)
+            Tensor.zeros(self.n_embedding, dtype=self.type).to(Device.DEFAULT),
+            Tensor.zeros((self.n_embedding // self.head_size, self.head_size, self.head_size), dtype=self.type).to(Device.DEFAULT),
+            Tensor.zeros(self.n_embedding, dtype=self.type).to(Device.DEFAULT)
         ] * self.n_layer
 
     def forward(self, token: int, state: List[Tensor]):
@@ -161,7 +162,7 @@ class RWKV_RNN:
         k = x + xx * x_k
         k = (kw @ k).relu() ** 2
         return vw @ k, x
-
+    
 def sample_logits(logits: Tensor, temperature: float = 0.0):
     probs = logits.softmax()
     if temperature == 0.0:
@@ -183,7 +184,8 @@ def config_from_file(file: str):
         'vocab_size': vocab_size,
         'head_size': head_size,
         'n_head': n_head,
-        'model_name': file
+        'model_name': file,
+        'dtype': dtypes.bfloat16
     }
     return config
 
