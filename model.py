@@ -1,17 +1,11 @@
-"""
-Based on: https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_v7_demo_rnn.py
-"""
-
 from typing import List
 from tinygrad import Tensor, TinyJit
 from tinygrad.nn import GroupNorm
 from tinygrad.dtype import dtypes
 from tinygrad.device import Device
 from tinygrad.nn.state import torch_load
-from tokenizers import Tokenizer
-import numpy as np
 
-class RWKV_RNN:
+class RWKV:
     def __init__(self, config):
         self.n_embedding = config.get("n_embd")
         self.n_layer = config.get("n_layer")
@@ -20,9 +14,53 @@ class RWKV_RNN:
         self.vocab_size = config.get("vocab_size")
         self.type = config.get("dtype", dtypes.float32)
         self.model = {}
+        
+        if "model_name" in config:
+            self._load_pretrained(config["model_name"])
+        else:
+            self._init_weights()
+    
+    def _init_weights(self):
+        # Initialize model weights randomly
+        for i in range(self.n_layer):
+            block_prefix = f'blocks.{i}.'
+            att_prefix = f'{block_prefix}att.'
+            ffn_prefix = f'{block_prefix}ffn.'
+            
+            # Attention weights
+            self.model[att_prefix + 'w0'] = Tensor.uniform(self.n_embedding, self.head_size).realize()
+            self.model[att_prefix + 'w1'] = Tensor.uniform(self.n_embedding, self.head_size).realize()
+            self.model[att_prefix + 'w2'] = Tensor.uniform(self.head_size, self.n_embedding).realize()
+            
+            # Time mixing weights
+            for suffix in ['x_r', 'x_w', 'x_k', 'x_v', 'x_a', 'x_g']:
+                self.model[att_prefix + suffix] = Tensor.uniform(self.n_embedding).realize()
+                
+            # Other attention weights
+            self.model[att_prefix + 'key.weight'] = Tensor.uniform(self.n_head * self.head_size, self.n_embedding).realize()
+            self.model[att_prefix + 'value.weight'] = Tensor.uniform(self.n_head * self.head_size, self.n_embedding).realize()
+            self.model[att_prefix + 'receptance.weight'] = Tensor.uniform(self.n_head * self.head_size, self.n_embedding).realize()
+            self.model[att_prefix + 'output.weight'] = Tensor.uniform(self.n_embedding, self.n_head * self.head_size).realize()
+            
+            # Layer norms
+            self.model[block_prefix + 'ln1.weight'] = Tensor.ones(self.n_embedding).realize()
+            self.model[block_prefix + 'ln1.bias'] = Tensor.zeros(self.n_embedding).realize()
+            self.model[block_prefix + 'ln2.weight'] = Tensor.ones(self.n_embedding).realize()
+            self.model[block_prefix + 'ln2.bias'] = Tensor.zeros(self.n_embedding).realize()
+            
+            # FFN weights
+            self.model[ffn_prefix + 'key.weight'] = Tensor.uniform(self.n_embedding * 4, self.n_embedding).realize()
+            self.model[ffn_prefix + 'value.weight'] = Tensor.uniform(self.n_embedding, self.n_embedding * 4).realize()
+            
+        # Embedding and output layers
+        self.model['emb.weight'] = Tensor.uniform(self.vocab_size, self.n_embedding).realize()
+        self.model['head.weight'] = Tensor.uniform(self.vocab_size, self.n_embedding).realize()
+        self.model['ln_out.weight'] = Tensor.ones(self.n_embedding).realize()
+        self.model['ln_out.bias'] = Tensor.zeros(self.n_embedding).realize()
 
-        model = torch_load(config.get("model_name"))
-
+    def _load_pretrained(self, model_path):
+        model = torch_load(model_path)
+        
         for key in model.keys():
             if key.endswith(('att.w0', 'att.a0', 'att.a1', 'att.a2')):
                 self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
@@ -31,10 +69,11 @@ class RWKV_RNN:
             else:
                 self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
 
+        # Special handling for first block
         self.model['blocks.0.att.v0'] = self.model['blocks.0.att.a0']
         self.model['blocks.0.att.v1'] = self.model['blocks.0.att.a1']
         self.model['blocks.0.att.v2'] = self.model['blocks.0.att.a2']
-
+        
         self.model['emb.weight'] = (
             model['emb.weight'].to(Device.DEFAULT).cast(self.type).layernorm()
             * model['blocks.0.ln0.weight'].to(Device.DEFAULT).cast(self.type)
@@ -60,8 +99,8 @@ class RWKV_RNN:
 
             xx = x.layernorm() * z[bbb+'ln1.weight'] + z[bbb+'ln1.bias']
 
-            xx, state[i*3+0], state[i*3+1], v_first = self.time_mixing(
-                i, self.n_head, self.head_size, xx, state[i*3+0], v_first, state[i*3+1],
+            xx, state[i*3+0], state[i*3+1], v_first = self._time_mixing(
+                i, xx, state[i*3+0], v_first, state[i*3+1],
                 z[att+'x_r'], z[att+'x_w'], z[att+'x_k'], z[att+'x_v'], z[att+'x_a'], z[att+'x_g'],
                 z[att+'w0'], z[att+'w1'], z[att+'w2'], z[att+'a0'], z[att+'a1'], z[att+'a2'], 
                 z[att+'v0'], z[att+'v1'], z[att+'v2'],
@@ -72,11 +111,7 @@ class RWKV_RNN:
             x = x + xx
 
             xx = x.layernorm() * z[bbb+'ln2.weight'] + z[bbb+'ln2.bias']
-
-            xx, state[i*3+2] = self.channel_mixing(
-                xx, state[i*3+2], 
-                z[ffn+'x_k'], z[ffn+'key.weight'], z[ffn+'value.weight']
-            )
+            xx, state[i*3+2] = self._channel_mixing(xx, state[i*3+2], z[ffn+'x_k'], z[ffn+'key.weight'], z[ffn+'value.weight'])
             x = x + xx
 
         x = x.layernorm() * z['ln_out.weight'] + z['ln_out.bias']
@@ -84,17 +119,16 @@ class RWKV_RNN:
 
         return x, state
 
-    def time_mixing(self, layer_id: int, H: int, N: int, x, x_prev, v_first, state,
+    def _time_mixing(self, layer_id: int, x, x_prev, v_first, state,
                     x_r, x_w, x_k, x_v, x_a, x_g,
                     w0, w1, w2, a0, a1, a2, v0, v1, v2,
                     g1, g2, k_k, k_a, r_k,
                     kw, vw, rw, ow, ln_w, ln_b):
+        H, N = self.n_head, self.head_size
+        
         def lp_normalize(x: Tensor, dim=-1, p=2.0, eps=1e-12):
-            # Compute the L_p norm along the specified dimension
             lp_norm = (x.abs() ** p).sum(axis=dim, keepdim=True) ** (1.0 / p)
-            # Add eps to avoid divide-by-zero
             lp_norm = lp_norm + eps
-            # Normalize by dividing each element by the norm
             return x / lp_norm
 
         xx = x_prev - x
@@ -157,52 +191,8 @@ class RWKV_RNN:
 
         return (ow @ (out * g)).realize(), x.realize(), state.realize(), v_first.realize()
     
-    def channel_mixing(self, x, x_prev, x_k, kw, vw):
+    def _channel_mixing(self, x, x_prev, x_k, kw, vw):
         xx = x_prev - x
         k = x + xx * x_k
         k = (kw @ k).relu() ** 2
         return vw @ k, x
-    
-def sample_logits(logits: Tensor, temperature: float = 0.0):
-    probs = logits.softmax()
-    if temperature == 0.0:
-        return int(probs.argmax().numpy())
-    if temperature != 1.0:
-        probs = (probs ** (1.0 / temperature))
-    return int(probs.multinomial().numpy().item())
-
-def config_from_file(file: str):
-    model = torch_load(file)
-
-    vocab_size, n_embd = model['emb.weight'].shape
-    n_layer = max(int(k.split('.')[1]) for k in model.keys() if k.startswith('blocks.'))
-    n_head, head_size = model['blocks.0.att.r_k'].shape
-    
-    config = {
-        'n_embd': n_embd,
-        'n_layer': n_layer,
-        'vocab_size': vocab_size,
-        'head_size': head_size,
-        'n_head': n_head,
-        'model_name': file,
-        'dtype': dtypes.bfloat16
-    }
-    return config
-
-model = RWKV_RNN(config_from_file('RWKV-x070-Pile-164M-L33-D512-20241218-ctx4096.pth'))
-init_state = model.init_state()
-
-tokenizer = Tokenizer.from_file("20B_tokenizer.json")
-prompt = "People from France speak"
-tokens = tokenizer.encode(prompt).ids
-
-# Initialize the model with the prompt
-for token in tokens:
-    out, init_state = model.forward(token, init_state)
-
-tokens.append(sample_logits(out))
-
-for i in range(10):
-    out, init_state = model.forward(tokens[-1], init_state)
-    tokens.append(sample_logits(out))
-    print(tokenizer.decode(tokens))
