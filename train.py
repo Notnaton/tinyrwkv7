@@ -6,6 +6,124 @@ from model import RWKV
 from tokenizers import Tokenizer
 from tqdm import tqdm
 
+import json
+from typing import List, Dict, Tuple
+from dataclasses import dataclass
+
+@dataclass
+class Conversation:
+    system: str
+    exchanges: List[Tuple[str, str]]  # List of (from, value) pairs
+
+class RWKVDataProcessor:
+    def __init__(self, tokenizer_path: str):
+        """Initialize the data processor with a tokenizer path."""
+        self.tokenizer = Tokenizer.from_file(tokenizer_path)
+        
+    def load_conversations(self, json_path: str) -> List[Conversation]:
+        """Load and parse conversations from a JSON file."""
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        conversations = []
+        for item in data:
+            # Extract system prompt
+            system_prompt = item.get('system', '')
+            
+            # Extract conversation exchanges
+            exchanges = []
+            for conv in item.get('conversations', []):
+                speaker = conv.get('from', '')
+                text = conv.get('value', '')
+                exchanges.append((speaker, text))
+                
+            conversations.append(Conversation(
+                system=system_prompt,
+                exchanges=exchanges
+            ))
+            
+        return conversations
+    
+    def prepare_training_data(self, conversations: List[Conversation]) -> List[str]:
+        """Convert conversations into training sequences."""
+        training_sequences = []
+        
+        for conv in conversations:
+            # Start with system prompt if available
+            if conv.system:
+                sequence = conv.system + "\n\n"
+            else:
+                sequence = ""
+                
+            # Add conversation exchanges
+            for speaker, text in conv.exchanges:
+                if speaker == "user":
+                    sequence += f"Human: {text}\n\n"
+                elif speaker == "assistant":
+                    sequence += f"Assistant: {text}\n\n"
+                    
+            training_sequences.append(sequence)
+            
+        return training_sequences
+    
+    def tokenize_sequences(self, sequences: List[str], max_length: int = None) -> List[List[int]]:
+        """Tokenize sequences and optionally truncate to max_length."""
+        tokenized = []
+        
+        for seq in sequences:
+            tokens = self.tokenizer.encode(seq).ids
+            if max_length:
+                tokens = tokens[:max_length]
+            tokenized.append(tokens)
+            
+        return tokenized
+
+def create_training_batches(tokenized_sequences: List[List[int]], 
+                          batch_size: int,
+                          sequence_length: int = None) -> List[List[List[int]]]:
+    """Create batches of sequences for training."""
+    batches = []
+    current_batch = []
+    
+    for seq in tokenized_sequences:
+        if sequence_length:
+            # Split long sequences into chunks of sequence_length
+            for i in range(0, len(seq), sequence_length):
+                chunk = seq[i:i + sequence_length]
+                if len(chunk) == sequence_length:  # Only use complete chunks
+                    current_batch.append(chunk)
+                    if len(current_batch) == batch_size:
+                        batches.append(current_batch)
+                        current_batch = []
+        else:
+            current_batch.append(seq)
+            if len(current_batch) == batch_size:
+                batches.append(current_batch)
+                current_batch = []
+    
+    # Add remaining sequences if any
+    if current_batch:
+        batches.append(current_batch)
+        
+    return batches
+
+# Example usage:
+"""
+# Initialize processor
+processor = RWKVDataProcessor('path_to_tokenizer.json')
+
+# Load and process data
+conversations = processor.load_conversations('training_data.json')
+sequences = processor.prepare_training_data(conversations)
+tokenized = processor.tokenize_sequences(sequences, max_length=1024)
+batches = create_training_batches(tokenized, batch_size=4, sequence_length=512)
+
+# Use batches for training
+for batch in batches:
+    # Train model using batch
+    pass
+"""
+
 def stablemax(x: Tensor) -> Tensor:
     """
     StableMax Activation Function: A numerically stable alternative to Softmax.
