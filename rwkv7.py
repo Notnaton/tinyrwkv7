@@ -24,9 +24,7 @@ class RWKV_RNN:
         model = torch_load(config.get("model_name"))
 
         for key in model.keys():
-            if key.endswith(('att.w0', 'att.a0', 'att.a1', 'att.a2')):
-                self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
-            elif key.endswith('att.r_k'):
+            if key.endswith('att.r_k'):
                 self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).flatten().squeeze()
             else:
                 self.model[key] = model[key].to(Device.DEFAULT).cast(self.type).squeeze()
@@ -42,13 +40,13 @@ class RWKV_RNN:
         )
 
     def init_state(self):
-        return [
+        self.state = [
             Tensor.zeros(self.n_embedding, dtype=self.type).to(Device.DEFAULT),
             Tensor.zeros((self.n_embedding // self.head_size, self.head_size, self.head_size), dtype=self.type).to(Device.DEFAULT),
             Tensor.zeros(self.n_embedding, dtype=self.type).to(Device.DEFAULT)
         ] * self.n_layer
 
-    def forward(self, token: int, state: List[Tensor]):
+    def forward(self, token: int):
         z = self.model
         x: Tensor = z['emb.weight'][token]
         v_first = Tensor.zeros_like(x)
@@ -60,8 +58,8 @@ class RWKV_RNN:
 
             xx = x.layernorm() * z[bbb+'ln1.weight'] + z[bbb+'ln1.bias']
 
-            xx, state[i*3+0], state[i*3+1], v_first = self.time_mixing(
-                i, self.n_head, self.head_size, xx, state[i*3+0], v_first, state[i*3+1],
+            xx, self.state[i*3+0], self.state[i*3+1], v_first = self.time_mixing(
+                i, self.n_head, self.head_size, xx, self.state[i*3+0], v_first, self.state[i*3+1],
                 z[att+'x_r'], z[att+'x_w'], z[att+'x_k'], z[att+'x_v'], z[att+'x_a'], z[att+'x_g'],
                 z[att+'w0'], z[att+'w1'], z[att+'w2'], z[att+'a0'], z[att+'a1'], z[att+'a2'], 
                 z[att+'v0'], z[att+'v1'], z[att+'v2'],
@@ -73,8 +71,8 @@ class RWKV_RNN:
 
             xx = x.layernorm() * z[bbb+'ln2.weight'] + z[bbb+'ln2.bias']
 
-            xx, state[i*3+2] = self.channel_mixing(
-                xx, state[i*3+2], 
+            xx, self.state[i*3+2] = self.channel_mixing(
+                xx, self.state[i*3+2], 
                 z[ffn+'x_k'], z[ffn+'key.weight'], z[ffn+'value.weight']
             )
             x = x + xx
@@ -82,7 +80,7 @@ class RWKV_RNN:
         x = x.layernorm() * z['ln_out.weight'] + z['ln_out.bias']
         x = z['head.weight'] @ x
 
-        return x, state
+        return x
 
     def time_mixing(self, layer_id: int, H: int, N: int, x, x_prev, v_first, state,
                     x_r, x_w, x_k, x_v, x_a, x_g,
@@ -190,7 +188,7 @@ def config_from_file(file: str):
     return config
 
 model = RWKV_RNN(config_from_file('RWKV-x070-Pile-164M-L33-D512-20241218-ctx4096.pth'))
-init_state = model.init_state()
+model.init_state()
 
 tokenizer = Tokenizer.from_file("20B_tokenizer.json")
 prompt = "People from France speak"
@@ -198,11 +196,11 @@ tokens = tokenizer.encode(prompt).ids
 
 # Initialize the model with the prompt
 for token in tokens:
-    out, init_state = model.forward(token, init_state)
+    out = model.forward(token)
 
 tokens.append(sample_logits(out))
 
 for i in range(10):
-    out, init_state = model.forward(tokens[-1], init_state)
+    out = model.forward(tokens[-1])
     tokens.append(sample_logits(out))
     print(tokenizer.decode(tokens))
